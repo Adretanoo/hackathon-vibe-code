@@ -1,4 +1,4 @@
-import { Courier } from '../entities/Courier.js';
+import { Courier, CourierType } from '../entities/Courier.js';
 import { Order, OrderStatus } from '../entities/Order.js';
 import { findPath } from '../utils/pathfinding.js';
 
@@ -26,14 +26,14 @@ export class DispatchService {
         }
     }
 
-    createCourier(id, x, y) {
-        const courier = new Courier(id, x, y);
+    createCourier(id, x, y, transportType = CourierType.WALKER) {
+        const courier = new Courier(id, x, y, transportType);
         this.couriers.push(courier);
         return courier;
     }
 
-    createOrder(id, pickupX, pickupY, dropX, dropY) {
-        const order = new Order(id, pickupX, pickupY, dropX, dropY);
+    createOrder(id, pickupX, pickupY, dropX, dropY, weight = 1) {
+        const order = new Order(id, pickupX, pickupY, dropX, dropY, weight);
         this.orders.push(order);
         return order;
     }
@@ -56,17 +56,17 @@ export class DispatchService {
             return null;
         }
 
-        const availableCouriers = this.couriers.filter(c => !c.isBusy);
+        // Filter: Not busy AND has enough capacity
+        const availableCouriers = this.couriers.filter(c => !c.isBusy && c.capacity >= order.weight);
+
         if (availableCouriers.length === 0) {
-            console.log('No couriers available');
-            return null; // Controller should handle this
+            console.log(`No suitable couriers available for Order ${orderId} (Weight: ${order.weight}kg)`);
+            return null;
         }
 
         let bestCourier = null;
         let minScore = Infinity;
 
-        // Note: For simplicity, checking pathfinding for ALL couriers might be slow if there are many.
-        // In production, we'd prune the search space first.
         for (const courier of availableCouriers) {
             const pathToPickup = findPath({ x: courier.x, y: courier.y }, { x: order.pickupX, y: order.pickupY }, this.obstacles);
             const pathPickupToDrop = findPath({ x: order.pickupX, y: order.pickupY }, { x: order.dropX, y: order.dropY }, this.obstacles);
@@ -87,7 +87,7 @@ export class DispatchService {
         if (bestCourier) {
             bestCourier.assignOrder(order.id);
             order.assignTo(bestCourier.id);
-            console.log(`Assigned Order ${order.id} to Courier ${bestCourier.id} (Score: ${minScore})`);
+            console.log(`Assigned Order ${order.id} to Courier ${bestCourier.id} [${bestCourier.transportType}] (Score: ${minScore})`);
             return bestCourier;
         }
 
@@ -120,11 +120,12 @@ export class DispatchService {
         return true;
     }
 
-    findNearestCourier(targetX, targetY) {
-        const freeCouriers = this.couriers.filter(c => !c.isBusy);
+    findNearestCourier(targetX, targetY, weight = 1) {
+        // Filter by Status AND Capacity
+        const freeCouriers = this.couriers.filter(c => !c.isBusy && c.capacity >= weight);
 
         if (freeCouriers.length === 0) {
-            return { error: "No couriers available" };
+            return { error: "No suitable couriers available for this weight" };
         }
 
         let bestCourier = null;
@@ -150,11 +151,12 @@ export class DispatchService {
                     id: bestCourier.id,
                     x: bestCourier.x,
                     y: bestCourier.y,
+                    transportType: bestCourier.transportType,
                     distance: minDistance
                 }
             };
         }
 
-        return { error: "No couriers available" };
+        return { error: "No suitable couriers available for this weight" };
     }
 }
