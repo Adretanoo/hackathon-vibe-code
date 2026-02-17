@@ -16,6 +16,7 @@ app.get('/api/state', (req, res) => {
     res.json({
         couriers: service.couriers,
         orders: service.orders,
+        orderQueue: service.orderQueue,
         obstacles: Array.from(service.obstacles)
     });
 });
@@ -58,17 +59,13 @@ app.post('/api/orders', (req, res) => {
 app.post('/api/assign/:orderId', (req, res) => {
     const { orderId } = req.params;
     try {
-        const courier = service.assignOrder(orderId);
-        if (courier) {
-            res.json({ success: true, courier });
+        const result = service.assignOrder(orderId);
+        if (result && result.queued) {
+            return res.json({ success: true, queued: true, message: 'Order placed in queue' });
+        } else if (result) {
+            return res.json({ success: true, courier: result });
         } else {
-            // Check availability reason
-            const order = service.findOrder(orderId);
-            const anyCapable = service.couriers.some(c => c.capacity >= order.weight);
-            if (!anyCapable) {
-                return res.json({ success: false, status: "No suitable couriers available for this weight" });
-            }
-            res.json({ success: false, message: 'Could not assign order (possibly no path)' });
+            return res.json({ success: false, message: 'Could not assign order' });
         }
     } catch (error) {
         res.status(400).json({ error: error.message });
@@ -100,6 +97,17 @@ app.post('/api/stage1', (req, res) => {
         orderId: `order_${Date.now()}`,
         assignedCourier: result.assignedCourier
     });
+});
+
+// POST /api/couriers/:id/complete-order: Complete current delivery and auto-assign from queue
+app.post('/api/couriers/:id/complete-order', (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = service.completeCourierOrder(id);
+        res.json(result);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
 });
 
 app.listen(port, () => {

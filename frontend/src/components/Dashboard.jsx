@@ -22,6 +22,7 @@ const getTransportCapacity = (type) => {
 export default function Dashboard() {
     const [couriers, setCouriers] = useState([]);
     const [orders, setOrders] = useState([]);
+    const [orderQueue, setOrderQueue] = useState([]);
     const [obstacles, setObstacles] = useState([]);
     const [errorMsg, setErrorMsg] = useState(null);
 
@@ -37,7 +38,8 @@ export default function Dashboard() {
             const data = await response.json();
             setCouriers(data.couriers);
             setOrders(data.orders);
-            setObstacles(data.obstacles || []); // array of "x,y" strings
+            setOrderQueue(data.orderQueue || []);
+            setObstacles(data.obstacles || []);
         } catch (error) {
             console.error('Error fetching state:', error);
         }
@@ -65,6 +67,28 @@ export default function Dashboard() {
         }
     };
 
+    const completeCourierOrder = async (courierId) => {
+        try {
+            const res = await fetch(`http://localhost:3001/api/couriers/${courierId}/complete-order`, {
+                method: 'POST'
+            });
+            const result = await res.json();
+            if (result.success) {
+                fetchData();
+                if (result.autoAssigned) {
+                    setErrorMsg(`✅ Courier ${courierId} completed order! Auto-assigned: ${result.autoAssigned}`);
+                } else {
+                    setErrorMsg(`✅ Courier ${courierId} completed order! (${result.completedOrdersToday} today)`);
+                }
+                setTimeout(() => setErrorMsg(null), 3000);
+            }
+        } catch (error) {
+            console.error('Error completing order:', error);
+            setErrorMsg("Error completing order");
+            setTimeout(() => setErrorMsg(null), 3000);
+        }
+    };
+
     const handleMvpFind = async () => {
         setErrorMsg(null);
         try {
@@ -79,7 +103,6 @@ export default function Dashboard() {
             });
             const result = await res.json();
 
-            // Handle all error statuses
             if (result.status && result.status.includes("No")) {
                 setErrorMsg(result.status);
                 setTimeout(() => setErrorMsg(null), 4000);
@@ -98,17 +121,16 @@ export default function Dashboard() {
     return (
         <div className="flex h-screen bg-gray-100 font-sans">
             {/* Sidebar */}
-            <div className="w-80 bg-white shadow-lg flex flex-col p-6 space-y-6 overflow-y-auto">
+            <div className="w-96 bg-white shadow-lg flex flex-col p-6 space-y-4 overflow-y-auto">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-800">Dispatch Core</h1>
-                    <p className="text-sm text-gray-500">Stage 2: Business Constraints</p>
+                    <p className="text-sm text-gray-500">Stage 3: Priorities & Queues</p>
                 </div>
 
-                {/* Error Toast */}
+                {/* Error/Success Toast */}
                 {errorMsg && (
-                    <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 rounded animate-pulse">
-                        <p className="font-bold">⚠️ Alert</p>
-                        <p className="text-sm">{errorMsg}</p>
+                    <div className={`border-l-4 p-4 rounded ${errorMsg.includes('✅') ? 'bg-green-100 border-green-500 text-green-700' : 'bg-red-100 border-red-500 text-red-700'} animate-pulse`}>
+                        <p className="text-sm font-medium">{errorMsg}</p>
                     </div>
                 )}
 
@@ -178,13 +200,13 @@ export default function Dashboard() {
                     </button>
                 </div>
 
-                {/* Courier List with Transport Types */}
-                <div className="flex-1 overflow-y-auto">
+                {/* Courier List */}
+                <div>
                     <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">Couriers ({couriers.length})</h3>
                     <ul className="space-y-2">
                         {couriers.map(c => (
                             <li key={c.id} className="p-3 bg-gray-50 rounded border hover:bg-gray-100 transition">
-                                <div className="flex justify-between items-start">
+                                <div className="flex justify-between items-start mb-2">
                                     <div className="flex items-center space-x-2">
                                         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${c.isBusy ? 'bg-red-500' : 'bg-green-500'}`}></span>
                                         <div>
@@ -198,10 +220,36 @@ export default function Dashboard() {
                                         <div className="text-xs text-gray-500">≤{getTransportCapacity(c.transportType)}kg</div>
                                     </div>
                                 </div>
+                                <div className="flex justify-between items-center mt-2 pt-2 border-t border-gray-200">
+                                    <span className="text-xs text-gray-600">Today: {c.completedOrdersToday || 0}</span>
+                                    {c.isBusy && (
+                                        <button
+                                            onClick={() => completeCourierOrder(c.id)}
+                                            className="bg-orange-500 hover:bg-orange-600 text-white text-xs py-1 px-2 rounded transition"
+                                        >
+                                            Complete
+                                        </button>
+                                    )}
+                                </div>
                             </li>
                         ))}
                     </ul>
                 </div>
+
+                {/* Order Queue */}
+                {orderQueue.length > 0 && (
+                    <div className="bg-yellow-50 p-3 rounded border border-yellow-300">
+                        <h3 className="text-yellow-800 font-bold text-sm mb-2">📋 Order Queue ({orderQueue.length})</h3>
+                        <ul className="space-y-1">
+                            {orderQueue.map(order => (
+                                <li key={order.id} className="text-xs flex justify-between items-center bg-white p-2 rounded border border-yellow-200">
+                                    <span className="font-medium">{order.id}</span>
+                                    <span className="text-gray-600">{order.weight}kg</span>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
             </div>
 
             {/* Main Map Area */}
@@ -233,23 +281,20 @@ export default function Dashboard() {
                         {/* Orders */}
                         {orders.filter(o => o.status !== 'DELIVERED').map(order => (
                             <g key={order.id}>
-                                {/* Pickup */}
                                 <rect x={order.pickupX - 1} y={order.pickupY - 1} width="2" height="2" fill="#22c55e" rx="0.5" />
                                 <text x={order.pickupX} y={order.pickupY - 2} fontSize="2.5" fill="#15803d" textAnchor="middle">P</text>
                                 <text x={order.pickupX} y={order.pickupY + 3.5} fontSize="1.8" fill="#15803d" textAnchor="middle">{order.weight}kg</text>
 
-                                {/* Drop */}
                                 <rect x={order.dropX - 1} y={order.dropY - 1} width="2" height="2" fill="#f97316" rx="0.5" />
                                 <text x={order.dropX} y={order.dropY + 3} fontSize="2.5" fill="#c2410c" textAnchor="middle">D</text>
 
-                                {/* Line */}
                                 {order.status === 'ASSIGNED' && (
                                     <line x1={order.pickupX} y1={order.pickupY} x2={order.dropX} y2={order.dropY} stroke="#22c55e" strokeDasharray="1" strokeWidth="0.3" opacity="0.6" />
                                 )}
                             </g>
                         ))}
 
-                        {/* Couriers with Transport Type Indicator */}
+                        {/* Couriers */}
                         {couriers.map(c => {
                             const emoji = getTransportEmoji(c.transportType);
                             return (
@@ -265,7 +310,7 @@ export default function Dashboard() {
                     {/* Overlay Info */}
                     <div className="absolute bottom-4 right-4 bg-white/90 p-2 rounded text-xs shadow text-gray-600">
                         <p>Map Size: 100x100</p>
-                        <p>Obstacles: {obstacles.length}</p>
+                        <p>Queue: {orderQueue.length}</p>
                         <p className="mt-1 pt-1 border-t border-gray-300">
                             🚶 Walker ≤5kg | 🚲 Bicycle ≤15kg | 🚗 Car ≤50kg
                         </p>

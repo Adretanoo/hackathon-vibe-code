@@ -18,6 +18,7 @@ export class Courier {
         this.transportType = transportType;
         this.isBusy = false;
         this.currentOrderId = null;
+        this.completedOrdersToday = 0;
     }
 
     get capacity() {
@@ -37,5 +38,9 @@ export class Courier {
     completeOrder() {
         this.isBusy = false;
         this.currentOrderId = null;
+    }
+
+    incrementCompletedOrders() {
+        this.completedOrdersToday++;
     }
 }
