@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import toast, { Toaster } from 'react-hot-toast';
 
 // Transport Type Emojis
 const getTransportEmoji = (type) => {
@@ -24,7 +25,7 @@ export default function Dashboard() {
     const [orders, setOrders] = useState([]);
     const [orderQueue, setOrderQueue] = useState([]);
     const [obstacles, setObstacles] = useState([]);
-    const [errorMsg, setErrorMsg] = useState(null);
+    const [loading, setLoading] = useState(false);
 
     // MVP Stage 1 State
     const [mvpCoords, setMvpCoords] = useState({ x: 30, y: 30 });
@@ -47,50 +48,95 @@ export default function Dashboard() {
 
     useEffect(() => {
         fetchData();
-        const interval = setInterval(fetchData, 1000);
+        const interval = setInterval(fetchData, 2000); // Reduced to 2 seconds for better responsiveness
         return () => clearInterval(interval);
     }, []);
 
     // Action Handlers
-    const addCourier = async () => fetch('http://localhost:3001/api/couriers', { method: 'POST' });
+    const addCourier = async () => {
+        setLoading(true);
+        try {
+            await fetch('http://localhost:3001/api/couriers', { method: 'POST' });
+            await fetchData();
+            toast.success('✅ New courier added!');
+        } catch (error) {
+            toast.error('Failed to add courier');
+        } finally {
+            setLoading(false);
+        }
+    };
 
     const addOrder = async () => {
+        setLoading(true);
         try {
-            await fetch('http://localhost:3001/api/orders', {
+            const res = await fetch('http://localhost:3001/api/orders', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ weight: orderWeight })
             });
-            fetchData();
+            const order = await res.json();
+            await fetchData();
+
+            // Try to assign immediately
+            const assignRes = await fetch(`http://localhost:3001/api/assign/${order.id}`, {
+                method: 'POST'
+            });
+            const assignResult = await assignRes.json();
+
+            if (assignResult.queued) {
+                toast('📋 Order queued - no suitable courier available', {
+                    icon: '⏳',
+                    style: {
+                        background: '#fef3c7',
+                        color: '#92400e',
+                        border: '2px solid #f59e0b'
+                    }
+                });
+            } else if (assignResult.success) {
+                toast.success(`✅ Order assigned to ${assignResult.courier.id}!`);
+            }
+
+            await fetchData();
         } catch (error) {
-            console.error('Error adding order:', error);
+            toast.error('Failed to create order');
+        } finally {
+            setLoading(false);
         }
     };
 
     const completeCourierOrder = async (courierId) => {
+        setLoading(true);
         try {
             const res = await fetch(`http://localhost:3001/api/couriers/${courierId}/complete-order`, {
                 method: 'POST'
             });
             const result = await res.json();
+
             if (result.success) {
-                fetchData();
+                await fetchData(); // Immediate refresh for instant UI update
+
                 if (result.autoAssigned) {
-                    setErrorMsg(`✅ Courier ${courierId} completed order! Auto-assigned: ${result.autoAssigned}`);
+                    toast.success(
+                        `🎉 ${courierId} completed delivery!\n🚀 Auto-assigned: ${result.autoAssigned}`,
+                        { duration: 4000 }
+                    );
                 } else {
-                    setErrorMsg(`✅ Courier ${courierId} completed order! (${result.completedOrdersToday} today)`);
+                    toast.success(
+                        `✅ ${courierId} completed delivery!\n📊 Total today: ${result.completedOrdersToday}`,
+                        { duration: 3000 }
+                    );
                 }
-                setTimeout(() => setErrorMsg(null), 3000);
             }
         } catch (error) {
             console.error('Error completing order:', error);
-            setErrorMsg("Error completing order");
-            setTimeout(() => setErrorMsg(null), 3000);
+            toast.error('Failed to complete order');
+        } finally {
+            setLoading(false);
         }
     };
 
     const handleMvpFind = async () => {
-        setErrorMsg(null);
+        setLoading(true);
         try {
             const res = await fetch('http://localhost:3001/api/stage1', {
                 method: 'POST',
@@ -104,58 +150,89 @@ export default function Dashboard() {
             const result = await res.json();
 
             if (result.status && result.status.includes("No")) {
-                setErrorMsg(result.status);
-                setTimeout(() => setErrorMsg(null), 4000);
+                toast.error(result.status, {
+                    duration: 4000,
+                    icon: '⚠️'
+                });
             } else if (result.assignedCourier) {
                 setTempRestaurant({ x: mvpCoords.x, y: mvpCoords.y });
-                fetchData();
-                alert(`Assigned Courier ${result.assignedCourier.id} [${result.assignedCourier.transportType}] (Distance: ${result.assignedCourier.distance.toFixed(1)})`);
+                await fetchData();
+                toast.success(
+                    `${getTransportEmoji(result.assignedCourier.transportType)} ${result.assignedCourier.id} assigned!\nDistance: ${result.assignedCourier.distance.toFixed(1)} units`,
+                    { duration: 3000 }
+                );
             }
         } catch (e) {
             console.error(e);
-            setErrorMsg("Network error. Please try again.");
-            setTimeout(() => setErrorMsg(null), 3000);
+            toast.error("Network error. Please try again.");
+        } finally {
+            setLoading(false);
         }
     };
 
     return (
-        <div className="flex h-screen bg-gray-100 font-sans">
-            {/* Sidebar */}
-            <div className="w-96 bg-white shadow-lg flex flex-col p-6 space-y-4 overflow-y-auto">
-                <div>
-                    <h1 className="text-2xl font-bold text-gray-800">Dispatch Core</h1>
-                    <p className="text-sm text-gray-500">Stage 3: Priorities & Queues</p>
-                </div>
+        <div className="flex h-screen bg-gradient-to-br from-gray-100 to-gray-200 font-sans">
+            <Toaster
+                position="top-right"
+                toastOptions={{
+                    duration: 3000,
+                    style: {
+                        background: '#363636',
+                        color: '#fff',
+                        fontWeight: '500',
+                        borderRadius: '8px',
+                        padding: '16px'
+                    },
+                    success: {
+                        iconTheme: {
+                            primary: '#10b981',
+                            secondary: '#fff',
+                        },
+                    },
+                    error: {
+                        iconTheme: {
+                            primary: '#ef4444',
+                            secondary: '#fff',
+                        },
+                    },
+                }}
+            />
 
-                {/* Error/Success Toast */}
-                {errorMsg && (
-                    <div className={`border-l-4 p-4 rounded ${errorMsg.includes('✅') ? 'bg-green-100 border-green-500 text-green-700' : 'bg-red-100 border-red-500 text-red-700'} animate-pulse`}>
-                        <p className="text-sm font-medium">{errorMsg}</p>
-                    </div>
-                )}
+            {/* Sidebar */}
+            <div className="w-96 bg-white shadow-2xl flex flex-col p-6 space-y-4 overflow-y-auto border-r-2 border-gray-300">
+                <div className="pb-4 border-b-2 border-gray-200">
+                    <h1 className="text-3xl font-bold text-gray-800 tracking-tight">Dispatch Core</h1>
+                    <p className="text-sm text-gray-500 mt-1">Stage 3: Priorities & Queues</p>
+                </div>
 
                 {/* Controls */}
                 <div className="space-y-3">
-                    <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">Actions</h2>
-                    <div className="flex space-x-2">
-                        <button onClick={addCourier} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded shadow transition">
-                            + Courier
-                        </button>
-                    </div>
+                    <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Actions</h2>
+                    <button
+                        onClick={addCourier}
+                        disabled={loading}
+                        className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white py-3 px-4 rounded-lg shadow-md transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed font-semibold"
+                    >
+                        + Add Courier
+                    </button>
 
                     {/* Order with Weight */}
-                    <div className="bg-green-50 p-3 rounded border border-green-200">
-                        <label className="text-xs text-gray-600 block mb-1">Order Weight (kg)</label>
+                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-4 rounded-lg border-2 border-green-200 shadow-sm">
+                        <label className="text-xs font-bold text-gray-700 block mb-2 uppercase tracking-wide">Order Weight (kg)</label>
                         <div className="flex space-x-2">
                             <input
                                 type="number"
                                 min="1"
                                 max="100"
-                                className="flex-1 border border-green-300 p-2 rounded"
+                                className="flex-1 border-2 border-green-300 p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 font-medium"
                                 value={orderWeight}
                                 onChange={(e) => setOrderWeight(parseInt(e.target.value) || 1)}
                             />
-                            <button onClick={addOrder} className="bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded shadow transition">
+                            <button
+                                onClick={addOrder}
+                                disabled={loading}
+                                className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white py-2 px-5 rounded-lg shadow-md transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed font-semibold"
+                            >
                                 + Order
                             </button>
                         </div>
@@ -163,71 +240,100 @@ export default function Dashboard() {
                 </div>
 
                 {/* MVP Stage 1 Box */}
-                <div className="bg-purple-50 p-4 rounded border border-purple-200">
-                    <h3 className="text-purple-800 font-bold text-sm mb-2">MVP: Find Nearest</h3>
-                    <div className="grid grid-cols-3 gap-2 mb-2">
+                <div className="bg-gradient-to-r from-purple-50 to-violet-50 p-4 rounded-lg border-2 border-purple-200 shadow-sm">
+                    <h3 className="text-purple-800 font-bold text-sm mb-3 uppercase tracking-wide">🎯 MVP: Find Nearest</h3>
+                    <div className="grid grid-cols-3 gap-2 mb-3">
                         <div>
-                            <label className="text-xs text-gray-600">X</label>
+                            <label className="text-xs text-gray-600 font-semibold">X</label>
                             <input
                                 type="number"
-                                className="w-full border p-1 rounded text-sm"
+                                className="w-full border-2 border-purple-200 p-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
                                 value={mvpCoords.x}
                                 onChange={(e) => setMvpCoords({ ...mvpCoords, x: parseInt(e.target.value) })}
                             />
                         </div>
                         <div>
-                            <label className="text-xs text-gray-600">Y</label>
+                            <label className="text-xs text-gray-600 font-semibold">Y</label>
                             <input
                                 type="number"
-                                className="w-full border p-1 rounded text-sm"
+                                className="w-full border-2 border-purple-200 p-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
                                 value={mvpCoords.y}
                                 onChange={(e) => setMvpCoords({ ...mvpCoords, y: parseInt(e.target.value) })}
                             />
                         </div>
                         <div>
-                            <label className="text-xs text-gray-600">Weight</label>
+                            <label className="text-xs text-gray-600 font-semibold">kg</label>
                             <input
                                 type="number"
                                 min="1"
-                                className="w-full border p-1 rounded text-sm"
+                                className="w-full border-2 border-purple-200 p-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
                                 value={mvpWeight}
                                 onChange={(e) => setMvpWeight(parseInt(e.target.value) || 1)}
                             />
                         </div>
                     </div>
-                    <button onClick={handleMvpFind} className="w-full bg-purple-600 hover:bg-purple-700 text-white py-1 px-3 rounded text-sm transition">
+                    <button
+                        onClick={handleMvpFind}
+                        disabled={loading}
+                        className="w-full bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-700 hover:to-violet-700 text-white py-2 px-3 rounded-lg text-sm transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed font-semibold shadow-md"
+                    >
                         Find & Assign
                     </button>
                 </div>
 
+                {/* Order Queue */}
+                {orderQueue.length > 0 && (
+                    <div className="bg-gradient-to-r from-yellow-100 to-amber-100 p-4 rounded-lg border-2 border-yellow-400 shadow-lg animate-pulse">
+                        <h3 className="text-amber-900 font-bold text-sm mb-3 flex items-center">
+                            <span className="text-2xl mr-2">📋</span>
+                            Order Queue ({orderQueue.length})
+                        </h3>
+                        <ul className="space-y-2 max-h-40 overflow-y-auto">
+                            {orderQueue.map(order => (
+                                <li key={order.id} className="flex justify-between items-center bg-white p-3 rounded-lg border-2 border-yellow-300 shadow-sm">
+                                    <span className="font-bold text-gray-700">{order.id}</span>
+                                    <span className="bg-yellow-200 text-yellow-900 px-3 py-1 rounded-full text-xs font-bold">
+                                        {order.weight}kg
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+
                 {/* Courier List */}
-                <div>
-                    <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">Couriers ({couriers.length})</h3>
+                <div className="flex-1">
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
+                        Couriers ({couriers.length})
+                    </h3>
                     <ul className="space-y-2">
                         {couriers.map(c => (
-                            <li key={c.id} className="p-3 bg-gray-50 rounded border hover:bg-gray-100 transition">
+                            <li key={c.id} className="p-3 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg border-2 border-gray-200 hover:border-gray-300 hover:shadow-md transition-all">
                                 <div className="flex justify-between items-start mb-2">
                                     <div className="flex items-center space-x-2">
-                                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${c.isBusy ? 'bg-red-500' : 'bg-green-500'}`}></span>
+                                        <span className={`w-3 h-3 rounded-full flex-shrink-0 ${c.isBusy ? 'bg-red-500 animate-pulse' : 'bg-green-500'} shadow-lg`}></span>
                                         <div>
-                                            <div className="font-medium text-gray-800 text-sm">{c.id}</div>
+                                            <div className="font-bold text-gray-800">{c.id}</div>
                                             <div className="text-xs text-gray-500">({c.x}, {c.y})</div>
                                         </div>
                                     </div>
                                     <div className="text-right">
-                                        <div className="text-lg leading-none">{getTransportEmoji(c.transportType)}</div>
-                                        <div className="text-xs text-gray-600 mt-1">{c.transportType}</div>
+                                        <div className="text-2xl leading-none">{getTransportEmoji(c.transportType)}</div>
+                                        <div className="text-xs text-gray-600 mt-1 font-semibold">{c.transportType}</div>
                                         <div className="text-xs text-gray-500">≤{getTransportCapacity(c.transportType)}kg</div>
                                     </div>
                                 </div>
-                                <div className="flex justify-between items-center mt-2 pt-2 border-t border-gray-200">
-                                    <span className="text-xs text-gray-600">Today: {c.completedOrdersToday || 0}</span>
+                                <div className="flex justify-between items-center mt-3 pt-3 border-t-2 border-gray-200">
+                                    <span className="text-xs font-bold text-gray-600">
+                                        📊 Today: <span className="text-blue-600">{c.completedOrdersToday || 0}</span>
+                                    </span>
                                     {c.isBusy && (
                                         <button
                                             onClick={() => completeCourierOrder(c.id)}
-                                            className="bg-orange-500 hover:bg-orange-600 text-white text-xs py-1 px-2 rounded transition"
+                                            disabled={loading}
+                                            className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white text-xs py-2 px-3 rounded-lg transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed font-bold shadow-md"
                                         >
-                                            Complete
+                                            ✓ Complete
                                         </button>
                                     )}
                                 </div>
@@ -235,85 +341,94 @@ export default function Dashboard() {
                         ))}
                     </ul>
                 </div>
-
-                {/* Order Queue */}
-                {orderQueue.length > 0 && (
-                    <div className="bg-yellow-50 p-3 rounded border border-yellow-300">
-                        <h3 className="text-yellow-800 font-bold text-sm mb-2">📋 Order Queue ({orderQueue.length})</h3>
-                        <ul className="space-y-1">
-                            {orderQueue.map(order => (
-                                <li key={order.id} className="text-xs flex justify-between items-center bg-white p-2 rounded border border-yellow-200">
-                                    <span className="font-medium">{order.id}</span>
-                                    <span className="text-gray-600">{order.weight}kg</span>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                )}
             </div>
 
             {/* Main Map Area */}
-            <div className="flex-1 p-8 flex justify-center items-center bg-gray-200 overflow-hidden">
-                <div className="relative bg-white shadow-2xl rounded-lg overflow-hidden border border-gray-300" style={{ width: '600px', height: '600px' }}>
+            <div className="flex-1 p-8 flex justify-center items-center overflow-hidden">
+                <div className="relative bg-white shadow-2xl rounded-2xl overflow-hidden border-4 border-gray-300" style={{ width: '650px', height: '650px' }}>
                     <svg width="100%" height="100%" viewBox="0 0 100 100">
                         {/* Grid Pattern */}
                         <defs>
                             <pattern id="smallGrid" width="10" height="10" patternUnits="userSpaceOnUse">
-                                <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#f0f0f0" strokeWidth="0.5" />
+                                <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#e5e7eb" strokeWidth="0.5" />
+                            </pattern>
+                            <pattern id="largeGrid" width="20" height="20" patternUnits="userSpaceOnUse">
+                                <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#d1d5db" strokeWidth="0.8" />
                             </pattern>
                         </defs>
                         <rect width="100" height="100" fill="url(#smallGrid)" />
+                        <rect width="100" height="100" fill="url(#largeGrid)" />
 
                         {/* Obstacles */}
                         {obstacles.map(obs => {
                             const [x, y] = obs.split(',').map(Number);
-                            return <rect key={obs} x={x} y={y} width="1" height="1" fill="#6b7280" opacity="0.8" />;
+                            return <rect key={obs} x={x} y={y} width="1" height="1" fill="#4b5563" opacity="0.9" stroke="#1f2937" strokeWidth="0.1" />;
                         })}
 
                         {/* Temp Restaurant */}
                         {tempRestaurant && (
                             <g>
-                                <rect x={tempRestaurant.x - 1.5} y={tempRestaurant.y - 1.5} width="3" height="3" className="fill-purple-500 animate-pulse" rx="0.5" />
-                                <text x={tempRestaurant.x} y={tempRestaurant.y - 2} fontSize="3" fill="#7e22ce" textAnchor="middle" fontWeight="bold">REST</text>
+                                <rect x={tempRestaurant.x - 1.5} y={tempRestaurant.y - 1.5} width="3" height="3" className="fill-purple-600 animate-pulse" rx="0.5" stroke="white" strokeWidth="0.2" />
+                                <text x={tempRestaurant.x} y={tempRestaurant.y - 2.5} fontSize="2.5" fill="#7e22ce" textAnchor="middle" fontWeight="bold">🏪</text>
                             </g>
                         )}
 
                         {/* Orders */}
                         {orders.filter(o => o.status !== 'DELIVERED').map(order => (
                             <g key={order.id}>
-                                <rect x={order.pickupX - 1} y={order.pickupY - 1} width="2" height="2" fill="#22c55e" rx="0.5" />
-                                <text x={order.pickupX} y={order.pickupY - 2} fontSize="2.5" fill="#15803d" textAnchor="middle">P</text>
-                                <text x={order.pickupX} y={order.pickupY + 3.5} fontSize="1.8" fill="#15803d" textAnchor="middle">{order.weight}kg</text>
+                                <rect x={order.pickupX - 1.2} y={order.pickupY - 1.2} width="2.4" height="2.4" fill="#10b981" rx="0.5" stroke="white" strokeWidth="0.2" />
+                                <text x={order.pickupX} y={order.pickupY - 2.5} fontSize="2.5" fill="#065f46" textAnchor="middle" fontWeight="bold">P</text>
+                                <text x={order.pickupX} y={order.pickupY + 4} fontSize="1.8" fill="#065f46" textAnchor="middle" fontWeight="bold">{order.weight}kg</text>
 
-                                <rect x={order.dropX - 1} y={order.dropY - 1} width="2" height="2" fill="#f97316" rx="0.5" />
-                                <text x={order.dropX} y={order.dropY + 3} fontSize="2.5" fill="#c2410c" textAnchor="middle">D</text>
+                                <rect x={order.dropX - 1.2} y={order.dropY - 1.2} width="2.4" height="2.4" fill="#f97316" rx="0.5" stroke="white" strokeWidth="0.2" />
+                                <text x={order.dropX} y={order.dropY + 3.5} fontSize="2.5" fill="#9a3412" textAnchor="middle" fontWeight="bold">D</text>
 
                                 {order.status === 'ASSIGNED' && (
-                                    <line x1={order.pickupX} y1={order.pickupY} x2={order.dropX} y2={order.dropY} stroke="#22c55e" strokeDasharray="1" strokeWidth="0.3" opacity="0.6" />
+                                    <line x1={order.pickupX} y1={order.pickupY} x2={order.dropX} y2={order.dropY} stroke="#10b981" strokeDasharray="1" strokeWidth="0.4" opacity="0.7" />
                                 )}
                             </g>
                         ))}
 
-                        {/* Couriers */}
+                        {/* Couriers - Enhanced visibility */}
                         {couriers.map(c => {
                             const emoji = getTransportEmoji(c.transportType);
+                            const color = c.isBusy ? "#ef4444" : "#10b981"; // Bright red or green
                             return (
-                                <g key={c.id} style={{ transition: 'all 0.5s ease' }}>
-                                    <circle cx={c.x} cy={c.y} r="1.5" fill={c.isBusy ? "#ef4444" : "#3b82f6"} stroke="white" strokeWidth="0.2" />
-                                    <text x={c.x} y={c.y - 2.5} fontSize="2" fill="#1f2937" textAnchor="middle" fontWeight="bold">{c.id}</text>
-                                    <text x={c.x} y={c.y + 4} fontSize="2.5" textAnchor="middle">{emoji}</text>
+                                <g key={c.id} style={{ transition: 'all 0.3s ease' }}>
+                                    {/* Glow effect */}
+                                    <circle cx={c.x} cy={c.y} r="2.5" fill={color} opacity="0.3" />
+                                    {/* Main circle */}
+                                    <circle cx={c.x} cy={c.y} r="2" fill={color} stroke="white" strokeWidth="0.3" />
+                                    {/* ID Label */}
+                                    <text x={c.x} y={c.y - 3.5} fontSize="2.2" fill="#1f2937" textAnchor="middle" fontWeight="bold" stroke="white" strokeWidth="0.3">{c.id}</text>
+                                    {/* Transport Emoji */}
+                                    <text x={c.x} y={c.y + 5} fontSize="3" textAnchor="middle">{emoji}</text>
                                 </g>
                             );
                         })}
                     </svg>
 
                     {/* Overlay Info */}
-                    <div className="absolute bottom-4 right-4 bg-white/90 p-2 rounded text-xs shadow text-gray-600">
-                        <p>Map Size: 100x100</p>
-                        <p>Queue: {orderQueue.length}</p>
-                        <p className="mt-1 pt-1 border-t border-gray-300">
-                            🚶 Walker ≤5kg | 🚲 Bicycle ≤15kg | 🚗 Car ≤50kg
+                    <div className="absolute bottom-4 right-4 bg-white/95 p-3 rounded-lg text-xs shadow-xl border-2 border-gray-300 text-gray-700 font-medium">
+                        <p className="font-bold text-gray-800 mb-1">Map: 100x100</p>
+                        <p>Queue: <span className="text-yellow-600 font-bold">{orderQueue.length}</span></p>
+                        <p className="mt-2 pt-2 border-t border-gray-300 text-xs">
+                            <span className="mr-2">🚶 ≤5kg</span>
+                            <span className="mr-2">🚲 ≤15kg</span>
+                            <span>🚗 ≤50kg</span>
                         </p>
+                    </div>
+
+                    {/* Status Legend */}
+                    <div className="absolute top-4 left-4 bg-white/95 p-3 rounded-lg shadow-xl border-2 border-gray-300">
+                        <div className="flex items-center space-x-2 mb-1">
+                            <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                            <span className="text-xs font-semibold text-gray-700">Free</span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                            <span className="text-xs font-semibold text-gray-700">Busy</span>
+                        </div>
                     </div>
                 </div>
             </div>
