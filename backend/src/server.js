@@ -62,8 +62,12 @@ app.post('/api/assign/:orderId', (req, res) => {
         const result = service.assignOrder(orderId);
         if (result && result.queued) {
             return res.json({ success: true, queued: true, message: 'Order placed in queue' });
-        } else if (result) {
-            return res.json({ success: true, courier: result });
+        } else if (result && result.courier) {
+            return res.json({
+                success: true,
+                courier: result.courier,
+                path: result.path // Include path for animation
+            });
         } else {
             return res.json({ success: false, message: 'Could not assign order' });
         }

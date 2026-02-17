@@ -69,6 +69,7 @@ export class DispatchService {
         let bestCourier = null;
         let minScore = Infinity;
         let scores = []; // Store all courier scores for tie-breaker
+        let bestPath = null;
 
         for (const courier of availableCouriers) {
             const pathToPickup = findPath({ x: courier.x, y: courier.y }, { x: order.pickupX, y: order.pickupY }, this.obstacles);
@@ -79,11 +80,12 @@ export class DispatchService {
             }
 
             const score = pathToPickup.distance + pathPickupToDrop.distance;
-            scores.push({ courier, score });
+            scores.push({ courier, score, pathToPickup });
 
             if (score < minScore) {
                 minScore = score;
                 bestCourier = courier;
+                bestPath = pathToPickup.path; // Store the path for animation
             }
         }
 
@@ -92,6 +94,7 @@ export class DispatchService {
         if (similarCouriers.length > 1) {
             similarCouriers.sort((a, b) => a.courier.completedOrdersToday - b.courier.completedOrdersToday);
             bestCourier = similarCouriers[0].courier;
+            bestPath = similarCouriers[0].pathToPickup.path;
             console.log(`Tie-breaker applied: Selected courier ${bestCourier.id} with ${bestCourier.completedOrdersToday} completed orders`);
         }
 
@@ -99,7 +102,12 @@ export class DispatchService {
             bestCourier.assignOrder(order.id);
             order.assignTo(bestCourier.id);
             console.log(`Assigned Order ${order.id} to Courier ${bestCourier.id} [${bestCourier.transportType}] (Score: ${minScore.toFixed(2)})`);
-            return bestCourier;
+
+            // Return courier WITH path for animation
+            return {
+                courier: bestCourier,
+                path: bestPath || [{ x: bestCourier.x, y: bestCourier.y }]
+            };
         }
 
         // If we get here, queue the order

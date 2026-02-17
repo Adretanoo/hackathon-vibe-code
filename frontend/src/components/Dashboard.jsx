@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import toast, { Toaster } from 'react-hot-toast';
 
 // Transport Type Emojis
@@ -27,6 +27,10 @@ export default function Dashboard() {
     const [obstacles, setObstacles] = useState([]);
     const [loading, setLoading] = useState(false);
 
+    // Animation state - stores animating couriers separately
+    const [animatingCouriers, setAnimatingCouriers] = useState({});
+    const animationTimers = useRef({});
+
     // MVP Stage 1 State
     const [mvpCoords, setMvpCoords] = useState({ x: 30, y: 30 });
     const [mvpWeight, setMvpWeight] = useState(1);
@@ -37,7 +41,16 @@ export default function Dashboard() {
         try {
             const response = await fetch('http://localhost:3001/api/state');
             const data = await response.json();
-            setCouriers(data.couriers);
+
+            // Merge server couriers with animating positions
+            const mergedCouriers = data.couriers.map(c => {
+                if (animatingCouriers[c.id]) {
+                    return { ...c, x: animatingCouriers[c.id].x, y: animatingCouriers[c.id].y };
+                }
+                return c;
+            });
+
+            setCouriers(mergedCouriers);
             setOrders(data.orders);
             setOrderQueue(data.orderQueue || []);
             setObstacles(data.obstacles || []);
@@ -48,9 +61,57 @@ export default function Dashboard() {
 
     useEffect(() => {
         fetchData();
-        const interval = setInterval(fetchData, 2000); // Reduced to 2 seconds for better responsiveness
+        const interval = setInterval(fetchData, 2000);
         return () => clearInterval(interval);
+    }, [animatingCouriers]);
+
+    // Cleanup animation timers on unmount
+    useEffect(() => {
+        return () => {
+            Object.values(animationTimers.current).forEach(clearTimeout);
+        };
     }, []);
+
+    // Animate courier movement along path
+    const animateCourierMovement = (courierId, path) => {
+        if (!path || path.length <= 1) return;
+
+        // Clear any existing animation for this courier
+        if (animationTimers.current[courierId]) {
+            clearTimeout(animationTimers.current[courierId]);
+        }
+
+        let currentStep = 0;
+
+        const moveStep = () => {
+            if (currentStep < path.length) {
+                const position = path[currentStep];
+
+                setAnimatingCouriers(prev => ({
+                    ...prev,
+                    [courierId]: { x: position.x, y: position.y }
+                }));
+
+                currentStep++;
+
+                if (currentStep < path.length) {
+                    animationTimers.current[courierId] = setTimeout(moveStep, 300); // 300ms per step
+                } else {
+                    // Animation complete - remove from animatingCouriers
+                    setTimeout(() => {
+                        setAnimatingCouriers(prev => {
+                            const newState = { ...prev };
+                            delete newState[courierId];
+                            return newState;
+                        });
+                        fetchData(); // Final sync
+                    }, 300);
+                }
+            }
+        };
+
+        moveStep();
+    };
 
     // Action Handlers
     const addCourier = async () => {
@@ -92,8 +153,13 @@ export default function Dashboard() {
                         border: '2px solid #f59e0b'
                     }
                 });
-            } else if (assignResult.success) {
-                toast.success(`✅ Order assigned to ${assignResult.courier.id}!`);
+            } else if (assignResult.success && assignResult.courier) {
+                toast.success(`🎯 Order assigned to ${assignResult.courier.id}!`);
+
+                // Start animation if path provided
+                if (assignResult.path && assignResult.path.length > 1) {
+                    animateCourierMovement(assignResult.courier.id, assignResult.path);
+                }
             }
 
             await fetchData();
@@ -113,7 +179,7 @@ export default function Dashboard() {
             const result = await res.json();
 
             if (result.success) {
-                await fetchData(); // Immediate refresh for instant UI update
+                await fetchData();
 
                 if (result.autoAssigned) {
                     toast.success(
@@ -202,7 +268,7 @@ export default function Dashboard() {
             <div className="w-96 bg-white shadow-2xl flex flex-col p-6 space-y-4 overflow-y-auto border-r-2 border-gray-300">
                 <div className="pb-4 border-b-2 border-gray-200">
                     <h1 className="text-3xl font-bold text-gray-800 tracking-tight">Dispatch Core</h1>
-                    <p className="text-sm text-gray-500 mt-1">Stage 3: Priorities & Queues</p>
+                    <p className="text-sm text-gray-500 mt-1">🎬 Animated Movement</p>
                 </div>
 
                 {/* Controls */}
@@ -313,7 +379,12 @@ export default function Dashboard() {
                                     <div className="flex items-center space-x-2">
                                         <span className={`w-3 h-3 rounded-full flex-shrink-0 ${c.isBusy ? 'bg-red-500 animate-pulse' : 'bg-green-500'} shadow-lg`}></span>
                                         <div>
-                                            <div className="font-bold text-gray-800">{c.id}</div>
+                                            <div className="font-bold text-gray-800 flex items-center">
+                                                {c.id}
+                                                {animatingCouriers[c.id] && (
+                                                    <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full animate-pulse">Moving</span>
+                                                )}
+                                            </div>
                                             <div className="text-xs text-gray-500">({c.x}, {c.y})</div>
                                         </div>
                                     </div>
@@ -389,20 +460,22 @@ export default function Dashboard() {
                             </g>
                         ))}
 
-                        {/* Couriers - Enhanced visibility */}
+                        {/* Couriers - WITH ANIMATION */}
                         {couriers.map(c => {
                             const emoji = getTransportEmoji(c.transportType);
-                            const color = c.isBusy ? "#ef4444" : "#10b981"; // Bright red or green
+                            const color = c.isBusy ? "#ef4444" : "#10b981";
+                            const isAnimating = animatingCouriers[c.id];
+
                             return (
-                                <g key={c.id} style={{ transition: 'all 0.3s ease' }}>
-                                    {/* Glow effect */}
-                                    <circle cx={c.x} cy={c.y} r="2.5" fill={color} opacity="0.3" />
+                                <g key={c.id} className={isAnimating ? "courier-animating" : ""}>
+                                    {/* Glow effect - larger when animating */}
+                                    <circle cx={c.x} cy={c.y} r={isAnimating ? "3" : "2.5"} fill={color} opacity="0.3" className="transition-all duration-300" />
                                     {/* Main circle */}
-                                    <circle cx={c.x} cy={c.y} r="2" fill={color} stroke="white" strokeWidth="0.3" />
+                                    <circle cx={c.x} cy={c.y} r="2" fill={color} stroke="white" strokeWidth="0.3" className="transition-all duration-300" />
                                     {/* ID Label */}
-                                    <text x={c.x} y={c.y - 3.5} fontSize="2.2" fill="#1f2937" textAnchor="middle" fontWeight="bold" stroke="white" strokeWidth="0.3">{c.id}</text>
+                                    <text x={c.x} y={c.y - 3.5} fontSize="2.2" fill="#1f2937" textAnchor="middle" fontWeight="bold" stroke="white" strokeWidth="0.3" className="transition-all duration-300">{c.id}</text>
                                     {/* Transport Emoji */}
-                                    <text x={c.x} y={c.y + 5} fontSize="3" textAnchor="middle">{emoji}</text>
+                                    <text x={c.x} y={c.y + 5} fontSize="3" textAnchor="middle" className="transition-all duration-300">{emoji}</text>
                                 </g>
                             );
                         })}
